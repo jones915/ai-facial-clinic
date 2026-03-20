@@ -3,16 +3,6 @@ const QWEN_API_KEY = process.env.QWEN_API_KEY;
 const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 const QWEN_MODEL = 'qwen-vl-max';
 
-// Vercel Serverless Function 配置
-export const config = {
-  api: {
-    bodyParser: {
-      sizeLimit: '10mb',
-    },
-    responseLimit: '10mb',
-  },
-};
-
 export default async function handler(req, res) {
   // 设置 CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -32,19 +22,6 @@ export default async function handler(req, res) {
     
     if (!frontPhoto) {
       return res.status(400).json({ error: '请上传正面照' });
-    }
-    
-    // 检查图片大小（Base64 约为原文件的 1.37 倍）
-    const frontSize = frontPhoto.length * 0.75 / 1024 / 1024; // MB
-    const sideSize = sidePhoto ? sidePhoto.length * 0.75 / 1024 / 1024 : 0;
-    
-    console.log(`📊 图片大小: 正面 ${frontSize.toFixed(2)}MB, 侧面 ${sideSize.toFixed(2)}MB`);
-    
-    if (frontSize > 4 || sideSize > 4) {
-      return res.status(400).json({ 
-        error: '图片太大', 
-        message: '请上传小于4MB的图片，或等待图片压缩完成' 
-      });
     }
     
     console.log('🔬 开始调用通义千问 VL 分析...');
@@ -99,7 +76,7 @@ async function analyzeWithQwenVL(frontPhoto, sidePhoto) {
 ### 4. 改善方案建议
 根据分析结果，给出针对性的医美项目建议。
 
-请严格按照以下JSON格式返回，不要包含任何其他文字：
+请严格按照以下JSON格式返回，不要包含markdown代码块标记：
 
 {
   "scores": {
@@ -136,21 +113,25 @@ async function analyzeWithQwenVL(frontPhoto, sidePhoto) {
 }`;
 
   if (!QWEN_API_KEY) {
-    console.error('⚠️ QWEN_API_KEY 未配置');
     throw new Error('API Key未配置，请在Vercel环境变量中设置QWEN_API_KEY');
   }
 
   try {
-    const content = [
-      { type: 'text', text: prompt },
-      { type: 'image_url', image_url: { url: frontPhoto } }
-    ];
-
+    // 通义千问 VL 正确的 API 格式
+    const content = [];
+    
+    // 添加正面照
+    content.push({ image: frontPhoto });
+    
+    // 如果有侧面照，也添加
     if (sidePhoto) {
-      content.push({ type: 'image_url', image_url: { url: sidePhoto } });
+      content.push({ image: sidePhoto });
     }
+    
+    // 添加文本提示
+    content.push({ text: prompt });
 
-    console.log('📤 发送请求到通义千问...');
+    console.log('📤 发送请求到通义千问 VL...');
     
     const response = await fetch(QWEN_ENDPOINT, {
       method: 'POST',
@@ -162,7 +143,10 @@ async function analyzeWithQwenVL(frontPhoto, sidePhoto) {
         model: QWEN_MODEL,
         input: {
           messages: [
-            { role: 'user', content: content }
+            { 
+              role: 'user', 
+              content: content 
+            }
           ]
         }
       })
@@ -175,16 +159,23 @@ async function analyzeWithQwenVL(frontPhoto, sidePhoto) {
       throw new Error(`通义千问API错误: ${data.message || data.msg || JSON.stringify(data)}`);
     }
 
-    const output = data.output?.choices?.[0]?.message?.content || data.output?.text;
+    // 提取返回的文本
+    const output = data.output?.choices?.[0]?.message?.content?.[0]?.text || '';
     console.log('📥 AI返回:', output?.substring(0, 200) + '...');
     
-    // 提取JSON
-    const jsonMatch = output.match(/\{[\s\S]*\}/);
+    // 提取JSON（去除可能的markdown代码块标记）
+    let jsonStr = output;
+    
+    // 去除 markdown 代码块标记
+    jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+    
+    // 提取 JSON 对象
+    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       return JSON.parse(jsonMatch[0]);
     }
     
-    throw new Error('无法解析AI返回结果');
+    throw new Error('无法解析AI返回结果: ' + output.substring(0, 100));
 
   } catch (error) {
     console.error('通义千问 VL 调用失败:', error);

@@ -1,16 +1,11 @@
 // AI面诊API服务
 
-// Vercel部署时使用相对路径，本地开发使用完整URL
 const API_BASE_URL = import.meta.env.PROD ? '' : 'http://localhost:3001';
 
 /**
- * 压缩图片
- * @param {string} base64Image - Base64图片
- * @param {number} maxWidth - 最大宽度
- * @param {number} quality - 质量 0-1
- * @returns {Promise<string>} 压缩后的Base64
+ * 压缩图片并转为 Base64
  */
-async function compressImage(base64Image, maxWidth = 800, quality = 0.7) {
+async function compressImage(base64Image, maxWidth = 800, quality = 0.6) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -18,7 +13,6 @@ async function compressImage(base64Image, maxWidth = 800, quality = 0.7) {
       let width = img.width;
       let height = img.height;
       
-      // 按比例缩放
       if (width > maxWidth) {
         height = (height * maxWidth) / width;
         width = maxWidth;
@@ -30,7 +24,7 @@ async function compressImage(base64Image, maxWidth = 800, quality = 0.7) {
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
       
-      // 转为JPEG格式压缩
+      // 转为 JPEG 格式
       const compressed = canvas.toDataURL('image/jpeg', quality);
       resolve(compressed);
     };
@@ -41,22 +35,27 @@ async function compressImage(base64Image, maxWidth = 800, quality = 0.7) {
 
 /**
  * 调用AI分析接口
- * @param {string} frontPhoto - 正面照Base64
- * @param {string} sidePhoto - 侧面照Base64
- * @returns {Promise<Object>} 分析结果
  */
 export async function analyzeFace(frontPhoto, sidePhoto) {
   try {
-    // 压缩图片
     console.log('📦 正在压缩图片...');
-    const compressedFront = await compressImage(frontPhoto, 800, 0.6);
-    const compressedSide = sidePhoto ? await compressImage(sidePhoto, 800, 0.6) : null;
+    
+    // 压缩图片
+    const compressedFront = await compressImage(frontPhoto, 800, 0.5);
+    const compressedSide = sidePhoto ? await compressImage(sidePhoto, 800, 0.5) : null;
+    
     console.log('✅ 图片压缩完成');
+    console.log('📊 正面照大小:', Math.round(compressedFront.length / 1024), 'KB');
+    if (compressedSide) {
+      console.log('📊 侧面照大小:', Math.round(compressedSide.length / 1024), 'KB');
+    }
     
     const url = import.meta.env.PROD 
       ? '/api/analyze' 
       : `${API_BASE_URL}/api/analyze`;
       
+    console.log('📡 请求地址:', url);
+    
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -67,6 +66,8 @@ export async function analyzeFace(frontPhoto, sidePhoto) {
         sidePhoto: compressedSide
       })
     });
+    
+    console.log('📥 响应状态:', response.status);
     
     if (!response.ok) {
       const errorText = await response.text();
