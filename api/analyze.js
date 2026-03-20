@@ -1,7 +1,17 @@
-// 通义千问 VL 面诊分析 API
+// 通义千问 VL 面诊分析 API (Vercel Serverless Function)
 const QWEN_API_KEY = process.env.QWEN_API_KEY;
 const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation';
 const QWEN_MODEL = 'qwen-vl-max';
+
+// Vercel Serverless Function 配置
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+    responseLimit: '10mb',
+  },
+};
 
 export default async function handler(req, res) {
   // 设置 CORS
@@ -18,14 +28,31 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { frontPhoto, sidePhoto, userId } = req.body;
+    const { frontPhoto, sidePhoto } = req.body;
     
     if (!frontPhoto) {
       return res.status(400).json({ error: '请上传正面照' });
     }
     
+    // 检查图片大小（Base64 约为原文件的 1.37 倍）
+    const frontSize = frontPhoto.length * 0.75 / 1024 / 1024; // MB
+    const sideSize = sidePhoto ? sidePhoto.length * 0.75 / 1024 / 1024 : 0;
+    
+    console.log(`📊 图片大小: 正面 ${frontSize.toFixed(2)}MB, 侧面 ${sideSize.toFixed(2)}MB`);
+    
+    if (frontSize > 4 || sideSize > 4) {
+      return res.status(400).json({ 
+        error: '图片太大', 
+        message: '请上传小于4MB的图片，或等待图片压缩完成' 
+      });
+    }
+    
+    console.log('🔬 开始调用通义千问 VL 分析...');
+    
     // 调用通义千问 VL 分析
     const result = await analyzeWithQwenVL(frontPhoto, sidePhoto);
+    
+    console.log('✅ 分析完成');
     
     res.json({
       success: true,
@@ -35,7 +62,7 @@ export default async function handler(req, res) {
     });
     
   } catch (error) {
-    console.error('分析错误:', error);
+    console.error('❌ 分析错误:', error);
     res.status(500).json({ 
       error: '分析失败', 
       message: error.message 
@@ -108,6 +135,11 @@ async function analyzeWithQwenVL(frontPhoto, sidePhoto) {
   "overallAdvice": "综合建议内容"
 }`;
 
+  if (!QWEN_API_KEY) {
+    console.error('⚠️ QWEN_API_KEY 未配置');
+    throw new Error('API Key未配置，请在Vercel环境变量中设置QWEN_API_KEY');
+  }
+
   try {
     const content = [
       { type: 'text', text: prompt },
@@ -118,6 +150,8 @@ async function analyzeWithQwenVL(frontPhoto, sidePhoto) {
       content.push({ type: 'image_url', image_url: { url: sidePhoto } });
     }
 
+    console.log('📤 发送请求到通义千问...');
+    
     const response = await fetch(QWEN_ENDPOINT, {
       method: 'POST',
       headers: {
@@ -136,11 +170,13 @@ async function analyzeWithQwenVL(frontPhoto, sidePhoto) {
 
     const data = await response.json();
     
-    if (data.code) {
-      throw new Error(`通义千问API错误: ${data.message || data.msg}`);
+    if (!response.ok || data.code) {
+      console.error('通义千问错误:', JSON.stringify(data));
+      throw new Error(`通义千问API错误: ${data.message || data.msg || JSON.stringify(data)}`);
     }
 
     const output = data.output?.choices?.[0]?.message?.content || data.output?.text;
+    console.log('📥 AI返回:', output?.substring(0, 200) + '...');
     
     // 提取JSON
     const jsonMatch = output.match(/\{[\s\S]*\}/);
